@@ -1,7 +1,11 @@
 package httpproxy
 
 import (
+	"context"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/499689317/go-log"
@@ -14,8 +18,9 @@ type Configurable interface {
 }
 
 type Server struct {
-	config Configurable
-	server *http.Server
+	config  Configurable
+	server  *http.Server
+	handler *gin.Engine
 }
 
 func NewServer(c Configurable) *Server {
@@ -39,6 +44,7 @@ func NewServer(c Configurable) *Server {
 
 	// TODO
 	s.config = c
+	s.handler = g
 
 	Init(g)
 
@@ -58,7 +64,27 @@ func (s *Server) Start() {
 
 func (s *Server) Run() {
 
-	s.Start()
+	go s.Start()
 
-	select {}
+	// Wait for interrupt signal to gracefully shutdown the server with
+	// a timeout of 5 seconds.
+	quit := make(chan os.Signal)
+	// kill (no param) default send syscall.SIGTERM
+	// kill -2 is syscall.SIGINT
+	// kill -9 is syscall.SIGKILL but can't be catch, so don't need add it
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Info().Msg("Shutdown Server ...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if e := s.server.Shutdown(ctx); e != nil {
+		log.Fatal().Err(e).Msg("Server Shutdown:")
+	}
+	// catching ctx.Done(). timeout of 5 seconds.
+	select {
+	case <-ctx.Done():
+		log.Info().Msg("timeout of 5 seconds.")
+	}
+	log.Info().Msg("Server exiting")
 }
